@@ -109,10 +109,8 @@ def linreg_lstsq(comp_np, mean_np, stdev_np, inst, config):
     def project(X, comp):
         N = X.shape[0]
         K = comp.shape[0]
-        print("project N", N)
-        print("project K", K)
+
         coords = torch.bmm(comp.expand([N]+[-1]*comp.ndim), X.view(N, -1, 1))
-        print("project coords", coords)
         return coords.reshape(N, K)
 
     for i in trange(n_samp // B, desc='Collecting samples', ascii=True):
@@ -124,13 +122,9 @@ def linreg_lstsq(comp_np, mean_np, stdev_np, inst, config):
         act = act - mean
         coords = project(act, comp)
         coords_scaled = coords / stdev
-        print("coords") # -> existiert nicht
-        #print("stdev", stdev)
-        #print("cords scaled", coords_scaled) #-> 0
-        #print("b",B) # b ist 10
+  
         A[i*B:(i+1)*B] = coords_scaled.detach().cpu().numpy()
         Z[i*B:(i+1)*B] = z.detach().cpu().numpy().reshape(B, -1)
-        #print(A)# -> hier teils nan
     # Solve least squares fit
 
     # gelsd = divide-and-conquer SVD; good default
@@ -187,7 +181,6 @@ def compute(config, dump_name, instrumented_model):
         model.use_w()
 
     inst.retain_layer(layer_key)
-    print("partial")
     model.partial_forward(model.sample_latent(1), layer_key) 
     sample_shape = inst.retained_features()[layer_key].shape
     sample_dims = np.prod(sample_shape)
