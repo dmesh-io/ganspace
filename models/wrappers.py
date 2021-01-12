@@ -94,6 +94,147 @@ class BaseModel(AbstractBaseClass, torch.nn.Module):
         return self.model.named_modules(*args, **kwargs)
 
 # PyTorch port of StyleGAN 2
+class MyStyleGAN2(BaseModel):
+    def __init__(self, device, class_name, truncation=1.0, use_w=False):
+        super(MyStyleGAN2, self).__init__('MyStyleGAN2', class_name or 'wearassembler')
+        self.device = device
+        self.truncation = truncation
+        self.latent_avg = None
+        self.w_primary = True# use_w # use W as primary latent space?
+        self.model = torch.load("model_39_dmesh_full.pt")
+
+        
+        # # Image widths
+        configs = {
+            # Converted NVIDIA official
+            'ffhq': 1024,
+            'wearassembler': 256
+        }
+
+        assert self.outclass in configs, \
+            f'Invalid StyleGAN2 class {self.outclass}, should be one of [{", ".join(configs.keys())}]'
+
+        self.resolution = configs[self.outclass]
+        self.name = f'StyleGAN2-{self.outclass}'
+        self.has_latent_residual = True
+        self.load_model()
+        self.set_noise_seed(0)
+        self.image_size = 256
+    def get_latent_shape(self):
+        return tuple(self.sample_latent(1).shape)
+    def latent_space_name(self):
+        return 'W' if self.w_primary else 'Z'
+
+    def use_w(self):
+        self.w_primary = True
+
+    def use_z(self):
+        self.w_primary = False ## warum setzt er den false wenn use_w? weil er erst z macht, dann w
+
+
+    def sample_np(self, z=None, n_samples=1, seed=None):
+
+        x = z
+        batch_size = n_samples
+        style = [(torch.randn(batch_size, self.model.G.latent_dim).to(self.device), self.model.G.num_layers)]
+       
+        if self.w_primary:
+            style = [(self.model.S(z), num_layers) for z, num_layers in style]
+            style = torch.cat([t[:, None, :].expand(-1, n, -1) for t, n in style], dim=1)
+            self.style = style
+        out = self.model.G(self.style, self.noise)
+        out = out.permute(0, 2, 3, 1).cpu().detach().numpy()
+        return np.clip(out, 0.0, 1.0).squeeze()
+
+
+    def load_model(self):
+        pass
+
+
+    def sample_latent(self, n_samples=1, seed=None, truncation=None):
+        if seed is None:
+            seed = np.random.randint(np.iinfo(np.int32).max) # use (reproducible) global rand state
+
+        rng = np.random.RandomState(seed)
+
+        
+        style = torch.randn(n_samples, self.model.G.latent_dim).to(self.device)
+        if 0: #self.w_primary:
+            style = [(self.model.S(z), num_layers) for z, num_layers in [(style, self.model.G.num_layers)]]
+            style = torch.cat([t[:, None, :].expand(-1, n, -1) for t, n in style], dim=1)
+        return style # style.flatten()
+
+    def latent_space_name(self):
+        return 'W' if self.w_primary else 'Z'
+    def get_max_latents(self):
+        return 7
+
+    def set_output_class(self, new_class):
+        if self.outclass != new_class:
+            raise RuntimeError('StyleGAN2: cannot change output class without reloading')
+    
+    def forward(self, x):
+        #x = x if isinstance(x, list) else [x]
+        batch_size = len(x)        
+        # self.style = x.reshape(1,7,512) reshape after flatten
+        self.style = x
+        #print("x:", x.reshape(1,7,512))
+        if 1: #not self.w_primary:
+
+            style = [(self.model.S(z), num_layers) for z, num_layers in [(self.style, self.model.G.num_layers)]]
+            style = torch.cat([t[:, None, :].expand(-1, n, -1) for t, n in style], dim=1)
+            self.style = style
+            
+        
+        #out = self.g_forward(self.style, self.noise) # das geht nicht -> g_forward funktioniert noch nicht
+        #out = self.g_partial_forward(self.style, self.noise, layer_name="G.blocks") ## ohne layer gehts genauso
+
+        out = self.model.G(self.style, self.noise) # das geht
+        return 0.5*(out+1)
+
+    def g_partial_forward(self, styles, input_noise, layer_name): ## hier kommt W rein (7,512)
+        batch_size = styles.shape[0]
+        image_size = self.model.G.image_size
+        if self.model.G.no_const:
+            avg_style = styles.mean(dim=1)[:, :, None, None]
+            x = self.model.G.to_initial_block(avg_style)
+        else:
+            x = self.model.G.initial_block.expand(batch_size, -1, -1, -1)
+
+        rgb = None
+        styles = styles.transpose(0, 1)
+        x = self.model.G.initial_conv(x)
+        if 'G.initial_conv' in layer_name:
+            return
+        i = 0
+        for style, block, attn in zip(styles, self.model.G.blocks, self.model.G.attns):
+            if attn is not None:
+                x = attn(x)
+            x, rgb = block(x, rgb, style, input_noise) ## tuple has no detach?
+            if ('G.blocks.'+str(i)) in layer_name:
+                return
+            i+=1
+        raise RuntimeError(f'Layer {layer_name} not encountered in partial_forward')
+
+
+    def partial_forward(self, x, layer_name):  ## wenn partial forward nur für effizienz wichtig ist und das fallback auf forward nicht funktioniert
+        self.forward(x)
+
+        # batch_size = len(x)
+        # ## ohne das benutzt er nirgendwo x -> random bilder
+        # self.style = x
+        # if not self.w_primary:
+        #     style = [(self.model.S(z), num_layers) for z, num_layers in [(self.style, self.model.G.num_layers)]]
+        #     style = torch.cat([t[:, None, :].expand(-1, n, -1) for t, n in style], dim=1)
+        #     self.style = style
+        
+        # #out = self.model.G(self.style, self.noise)
+        # out = self.g_partial_forward(self.style, self.noise, layer_name)
+
+    def set_noise_seed(self, seed):
+        self.noise = torch.FloatTensor(1, self.model.G.image_size, self.model.G.image_size, 1).uniform_(0., 1.).to(self.device)
+
+# PyTorch port of StyleGAN 2
 class StyleGAN2(BaseModel):
     def __init__(self, device, class_name, truncation=1.0, use_w=False):
         super(StyleGAN2, self).__init__('StyleGAN2', class_name or 'ffhq')
@@ -175,7 +316,6 @@ class StyleGAN2(BaseModel):
         
         if self.w_primary:
             z = self.model.style(z)
-
         return z
 
     def get_max_latents(self):
@@ -678,6 +818,8 @@ def get_model(name, output_class, device, **kwargs):
         model = StyleGAN(device, class_name=output_class)
     elif name == 'StyleGAN2':
         model = StyleGAN2(device, class_name=output_class)
+    elif name == 'MyStyleGAN2':
+        model = MyStyleGAN2(device, class_name=output_class)
     else:
         raise RuntimeError(f'Unknown model {name}')
 
@@ -694,6 +836,7 @@ def _(cfg, device, **kwargs):
 def get_instrumented_model(name, output_class, layers, device, **kwargs):
     model = get_model(name, output_class, device, **kwargs)
     model.eval()
+    print("Got Model")
 
     inst = kwargs.get('inst', None)
     if inst:
@@ -705,7 +848,7 @@ def get_instrumented_model(name, output_class, layers, device, **kwargs):
     # Verify given layer names
     module_names = [name for (name, _) in model.named_modules()]
     for layer_name in layers:
-        if not layer_name in module_names:
+        if not layer_name in module_names: 
             print(f"Layer '{layer_name}' not found in model!")
             print("Available layers:", '\n'.join(module_names))
             raise RuntimeError(f"Unknown layer '{layer_name}''")
@@ -720,7 +863,7 @@ def get_instrumented_model(name, output_class, layers, device, **kwargs):
         layers = layers,
         cuda = device.type == 'cuda',
         gen = True,
-        latent_shape = model.get_latent_shape()
+        latent_shape =  model.get_latent_shape()
     ))
 
     if kwargs.get('use_w', False):

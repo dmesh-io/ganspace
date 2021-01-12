@@ -16,7 +16,7 @@ os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
 import torch, json, numpy as np
 from types import SimpleNamespace
 import matplotlib.pyplot as plt
-from pathlib import Path
+from pathlib import Path 
 from os import makedirs
 from PIL import Image
 from netdissect import proggan, nethook, easydict, zdataset
@@ -108,7 +108,7 @@ def make_grid(latent, lat_mean, lat_comp, lat_stdev, act_mean, act_comp, act_std
             
             # Custom x-axis labels
             W = imgs[0].shape[1] # image width
-            P = imgs[1].shape[1] # padding width
+            P = 64 #imgs[1].shape[1] # padding width
             locs = [(0.5*W + i*(W+P)) for i in range(n_cols)]
             plt.xticks(locs, ["{:.2f}".format(v) for v in x_range])
             plt.yticks([])
@@ -143,7 +143,7 @@ if __name__ == '__main__':
     has_gpu = torch.cuda.is_available()
     device = torch.device('cuda' if has_gpu else 'cpu')
     layer_key = args.layer
-    layer_name = layer_key #layer_key.lower().split('.')[-1]
+    layer_name = layer_key.lower().split('.')[-1]
 
     basedir = Path(__file__).parent.resolve()
     outdir = basedir / 'out'

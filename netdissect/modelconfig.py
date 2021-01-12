@@ -89,7 +89,6 @@ def create_instrumented_model(args, **kwargs):
                     'torch.nn.modules.pooling']
                 ][:-1]
         print_progress('Defaulting to layers: %s' % ' '.join(args.layers))
-
     # Now wrap the model for instrumentation.
     model = InstrumentedModel(model)
     model.meta = meta
@@ -138,7 +137,8 @@ def annotate_model_shapes(model, gen=False, imgsize=None, latent_shape=None):
 
     # Annotate shapes.
     model.input_shape = input_shape
-    model.feature_shape = { layer: feature.shape
-            for layer, feature in model.retained_features().items() }
+    #print('Feature shape: {}'.format(model.retained_features()))
+
+    model.feature_shape = { layer: feature.shape  for layer, feature in model.retained_features().items() }
     model.output_shape = output.shape
     return model
